@@ -1,0 +1,244 @@
+apiVersion: v1
+kind: Template
+metadata:
+  name: confluent-zookeeper
+  annotations:
+    openshift.io/display-name: Confluent ZooKeeper
+    description: Create a replicated ZooKeeper server with persistent storage.
+    iconClass: icon-infinispan
+    tags: confluent,zookeeper,integration
+labels:
+  template: confluent-zookeeper
+  component: confluent-zookeeper
+
+parameters:
+- name: NAME
+  displayName: Instance name
+  value: confluent-zookeeper
+  description: The name of the instance. The name will be used for the stateful set, the service and the config map.
+  required: true
+- name: REPLICAS
+  displayName: Number of replicas
+  value: '1'
+  description: The initial number of replicas.
+  required: true
+- name: MEMORY
+  displayName: Memory
+  value: 500M
+  description: The amount of memory to request for each pod (values must be specified as M or G).
+  required: true
+- name: CPU
+  displayName: CPU
+  value: 500m
+  description: The amount of CPU to request for each pod.
+  required: true
+- name: ZK_TICK_TIME
+  displayName: ZooKeeper tick time
+  value: '2000'
+  description: The length of a single tick, which is the basic time unit used by ZooKeeper, as measured in milliseconds. It is used to regulate heartbeats, and timeouts.
+  required: true
+- name: ZK_INIT_LIMIT
+  displayName: ZooKeeper init limit
+  value: '10'
+  description: Amount of time, in ticks, to allow followers to connect and sync to a leader.
+  required: true
+- name: ZK_SYNC_LIMIT
+  displayName: ZooKeeper sync limit
+  value: '5'
+  description: Amount of time, in ticks, to allow followers to sync with ZooKeeper. If followers fall too far behind a leader, they will be dropped.
+  required: true
+- name: ZK_MAX_CLIENT_CNXNS
+  displayName: ZooKeeper maximum client connections
+  value: '60'
+  description: Limits the number of concurrent connections (at the socket level) that a single client, identified by IP address, may make to a single member of the ZooKeeper ensemble.
+  required: true
+- name: ZK_SNAP_RETAIN_COUNT
+  displayName: ZooKeeper auto purge retain count
+  value: '3'
+  description: The number of most recent snapshots and the corresponding transaction logs in the dataDir and dataLogDir to retain.
+  required: true
+- name: ZK_PURGE_INTERVAL
+  displayName: ZooKeeper auto purge interval
+  value: '168'
+  description: The time interval in hours for which the purge task has to be triggered. Set to 0 to disable auto purging.
+  required: true
+- name: IMAGE_NAME
+  displayName: Docker image name
+  description: The name of the Docker image to instantiate.
+  value: confluent-zookeeper
+  required: true
+- name: DOCKER_REGISTRY
+  displayName: Docker registry
+  description: The Docker registry address.
+  value: 172.30.1.1:5000
+  required: true
+- name: NAMESPACE
+  displayName: Namespace
+  description: The namespace the Docker image is located in.
+  value: "kafka"
+  required: true
+- name: VERSION
+  displayName: Docker image version
+  description: The version of the Docker image.
+  value: latest
+  required: true
+
+objects:
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: ${NAME}-service
+    labels:
+      app: ${NAME}
+  spec:
+    ports:
+    - port: 2181
+      name: client
+    - port: 2888
+      name: server
+    - port: 3888
+      name: leader-election
+    - port: 7071
+      name: metrics
+    clusterIP: None
+    selector:
+      app: ${NAME}
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: ${NAME}-config
+    labels:
+      app: ${NAME}
+  data:
+    jvm.heap: ${MEMORY}
+    tick: ${ZK_TICK_TIME}
+    init: ${ZK_INIT_LIMIT}
+    sync: ${ZK_SYNC_LIMIT}
+    client.cnxns: ${ZK_MAX_CLIENT_CNXNS}
+    snap.retain: ${ZK_SNAP_RETAIN_COUNT}
+    purge.interval: ${ZK_PURGE_INTERVAL}
+- apiVersion: apps/v1beta1
+  kind: StatefulSet
+  metadata:
+    name: ${NAME}
+    labels:
+      app: ${NAME}
+  spec:
+    serviceName: ${NAME}-service
+    replicas: ${{REPLICAS}}
+    template:
+      metadata:
+        annotations:
+          prometheus.io/path: /metrics
+          prometheus.io/port: '7071'
+          prometheus.io/scheme: http
+          prometheus.io/scrape: 'true'
+        labels:
+          app: ${NAME}
+          imageName: ${IMAGE_NAME}
+          imageVersion: ${VERSION}
+      spec:
+        affinity:
+          podAntiAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - ${NAME}
+              topologyKey: kubernetes.io/hostname
+        containers:
+        - name: ${NAME}
+          imagePullPolicy: IfNotPresent
+          image: ${DOCKER_REGISTRY}/${NAMESPACE}/${IMAGE_NAME}:${VERSION}
+          resources:
+            requests:
+              memory: ${MEMORY}i
+              cpu: ${CPU}
+          ports:
+          - containerPort: 2181
+            name: client
+          - containerPort: 2888
+            name: server
+          - containerPort: 3888
+            name: leader-election
+          - containerPort: 7071
+            name: metrics
+          env:
+          - name: ZK_REPLICAS
+            value: ${REPLICAS}
+          - name: ZK_HEAP_SIZE
+            valueFrom:
+              configMapKeyRef:
+                name: ${NAME}-config
+                key: jvm.heap
+          - name: ZK_TICK_TIME
+            valueFrom:
+              configMapKeyRef:
+                name: ${NAME}-config
+                key: tick
+          - name: ZK_INIT_LIMIT
+            valueFrom:
+              configMapKeyRef:
+                name: ${NAME}-config
+                key: init
+          - name: ZK_SYNC_LIMIT
+            valueFrom:
+              configMapKeyRef:
+                name: ${NAME}-config
+                key: tick
+          - name: ZK_MAX_CLIENT_CNXNS
+            valueFrom:
+              configMapKeyRef:
+                name: ${NAME}-config
+                key: client.cnxns
+          - name: ZK_SNAP_RETAIN_COUNT
+            valueFrom:
+              configMapKeyRef:
+                name: ${NAME}-config
+                key: snap.retain
+          - name: ZK_PURGE_INTERVAL
+            valueFrom:
+              configMapKeyRef:
+                name: ${NAME}-config
+                key: purge.interval
+          - name: ZK_CLIENT_PORT
+            value: '2181'
+          - name: ZK_SERVER_PORT
+            value: '2888'
+          - name: ZK_ELECTION_PORT
+            value: '3888'
+          - name: KAFKA_LOG4J_OPTS
+            value: -Dlog4j.configuration=file:/etc/zookeeper/log4j.properties
+          command:
+          - sh
+          - -c
+          - ${ZK_BIN_DIR}/zk-generate-config.sh &&
+            KAFKA_OPTS="${KAFKA_OPTS} -javaagent:${PROMETHEUS_EXPORTER_DIR}/jmx_prometheus_javaagent-${PROMETHEUS_JMX_EXPORTER_VERSION}.jar=7071:${PROMETHEUS_EXPORTER_DIR}/zookeeper.yaml"
+            zookeeper-server-start ${ZK_CONFIG_DIR}/zookeeper.conf
+          readinessProbe:
+            exec:
+              command:
+              - /opt/zookeeper/bin/zk-readiness-probe.sh
+            initialDelaySeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command:
+              - /opt/zookeeper/bin/zk-liveness-probe.sh
+            initialDelaySeconds: 300
+            timeoutSeconds: 5
+          volumeMounts:
+          - name: datadir
+            mountPath: /var/lib/zookeeper
+    volumeClaimTemplates:
+    - metadata:
+        name: datadir
+      spec:
+        accessModes:
+        - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi
