@@ -1,0 +1,88 @@
+apiVersion: v1
+kind: Template
+metadata:
+  name: confluent-zookeeper-builder
+  annotations:
+    description: Confluent Zookeeper image build template
+    openshift.io/display-name: Confluent Zookeeper Image Builder
+    iconClass: icon-infinispan
+    tags: confluent,zookeeper
+labels:
+  template: bmw-confluent-zookeeper-builder
+  component: confluent-zookeeper
+
+parameters:
+- name: GIT_REPOSITORY
+  displayName: Git repository
+  value: https://github.com/manepallipavankumar/confluent-zookeeper.git
+  description: The Git source code repository.
+  required: true
+- name: GIT_REF
+  displayName: Git branch
+  description: The Git source reference.
+  value: master
+  required: true
+- name: GIT_SECRET
+  displayName: Git Secret
+  description: The secret to access the Git repository.
+  value: git-secret
+  required: true
+- name: GIT_JENKINSFILE
+  displayName: Jenkinsfile
+  description: The location of the Jenkinsfile withing the repository.
+  value: Jenkinsfile
+  required: true
+- name: SOURCE_IMAGE_STREAM_NAME
+  displayName: Source Image Stream Name
+  description: The name of the source image stream used in the Docker strategy.
+  value: confluent-base
+  required: true
+- name: SOURCE_IMAGE_STREAM_VERSION
+  displayName: Source Image Stream Version
+  description: The version of the source image stream used in the Docker strategy.
+  value: latest
+  required: true
+- name: IMAGE_STREAM_NAME
+  displayName: Image Stream Name
+  description: The name of the output image stream.
+  value: confluent-zookeeper
+  required: true
+- name: IMAGE_STREAM_VERSION
+  displayName: Image Strean Version
+  description: The version of the output image stream.
+  value: latest
+  required: true
+
+objects:
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    name: ${IMAGE_STREAM_NAME}
+  spec:
+    tags:
+    - name: latest
+      from:
+        kind: ImageStreamTag
+        name: ${IMAGE_STREAM_VERSION}
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    name: confluent-zookeeper-builder
+  spec:
+    runPolicy: Serial
+    source:
+      git:
+        uri: ${GIT_REPOSITORY}
+        ref: ${GIT_REF}
+      sourceSecret:
+        name: ${GIT_SECRET}
+    strategy:
+      type: Docker
+      dockerStrategy:
+        from:
+          kind: ImageStreamTag
+          name: ${SOURCE_IMAGE_STREAM_NAME}:${SOURCE_IMAGE_STREAM_VERSION}
+    output:
+      to:
+        kind: ImageStreamTag
+        name: ${IMAGE_STREAM_NAME}:${IMAGE_STREAM_VERSION}
